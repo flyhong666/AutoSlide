@@ -16,7 +16,7 @@ jobs:
     name: Build & Release Android APK
     runs-on: ubuntu-latest
 
-    # 声明权限，防止 403 Forbidden 错误
+    # 声明权限，防止创建 Release 时抛出 403 错误
     permissions:
       contents: write
 
@@ -34,30 +34,30 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 编译 Release APK
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
+      # 1. 编译 Debug APK（Gradle 会自动使用默认证书完成签名，确保可以正常安装）
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
 
-      # 确定发布所用的 Tag 名称（兼容 Tag 推送与手动运行）
+      # 2. 确定发布所用的 Tag 名称（兼容 Tag 推送与手动运行）
       - name: Determine Tag Name
         id: tag
         run: |
           if [ -n "${{ github.event.inputs.release_tag }}" ]; then
             TAG_NAME="${{ github.event.inputs.release_tag }}"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${github_ref#refs/tags/}"
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
           else
-            # 手动触发且未填 Tag 时，使用时间戳作为默认 Tag
+            # 手动触发且未填 Tag 时，使用当前时间戳作为默认 Tag
             TAG_NAME="v$(date +'%Y.%m.%d-%H%M')"
           fi
           echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
           echo "Release tag will be: $TAG_NAME"
 
-      # 寻找编译好的 APK 文件
+      # 3. 寻找编译好的 Debug APK 文件（路径更新为 app/build/outputs/apk/debug/）
       - name: Locate APK File
         id: find_apk
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          APK_PATH=$(find app/build/outputs/apk/debug/ -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "错误：未查找到生成的 APK 文件！"
             exit 1
@@ -65,7 +65,7 @@ jobs:
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
           echo "Found APK at: $APK_PATH"
 
-      # 发布 GitHub Release
+      # 4. 发布至 GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
