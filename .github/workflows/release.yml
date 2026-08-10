@@ -1,0 +1,52 @@
+name: Build and Release APK
+
+on:
+  push:
+    tags:
+      - 'v*' # 当推送形如 v1.0.0, v2.5.2 等 tag 时触发发布流程
+  workflow_dispatch: # 支持在 GitHub 页面手动触发构建
+
+jobs:
+  build-and-release:
+    name: Build & Release Android APK
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # 授予 GitHub Release 创建与上传权限
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APK (Optional / Standard Sign)
+        # 如果需要使用自己的签名文件，可在 Repo 的 Settings -> Secrets and variables -> Actions 中配置
+        # 此处展示的是自动寻找生成的 APK 文件逻辑
+        id: find_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "Found APK at: $APK_PATH"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ env.APK_PATH }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
