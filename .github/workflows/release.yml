@@ -3,11 +3,13 @@ name: Build and Release APK
 on:
   push:
     tags:
-      - 'v*' # 触发条件 1：推送形如 v1.0.0, v2.5.2 的 Tag
-  workflow_dispatch: # 触发条件 2：支持在 GitHub 页面手动点击运行
+      - 'v*' # 触发条件 1：推送形如 v1.0.0 的 Tag
+    branches:
+      - main # 触发条件 2：直接 push 到 main 分支时自动触发构建发布
+  workflow_dispatch: # 触发条件 3：支持在 GitHub 页面手动点击运行
     inputs:
       release_tag:
-        description: '发布版本 Tag（手动运行必填，例如 v2.5.3）'
+        description: '自定义 Tag（选填，留空则自动提取 versionName）'
         required: false
         default: ''
 
@@ -16,9 +18,8 @@ jobs:
     name: Build & Release Android APK
     runs-on: ubuntu-latest
 
-    # 声明权限，防止 403 Forbidden 错误
     permissions:
-      contents: write
+      contents: write # 声明写权限用于创建 Release
 
     steps:
       - name: Checkout Repository
@@ -34,26 +35,42 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 编译 Release APK
+      # 1. 编译 Release APK
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      # 确定发布所用的 Tag 名称（兼容 Tag 推送与手动运行）
+      # 2. 从 app/build.gradle.kts 中自动提取 versionName 作为 Tag
       - name: Determine Tag Name
         id: tag
         run: |
+          # 使用正则表达式从 app/build.gradle.kts 提取 versionName 的值
+          VERSION_NAME=$(grep -E 'versionName\s*=\s*' app/build.gradle.kts | head -n 1 | sed -E 's/.*versionName\s*=\s*["'\''\`]([^"'\''\`]+)["'\''\`].*/\1/')
+
+          if [ -z "$VERSION_NAME" ]; then
+            echo "错误：未能在 app/build.gradle.kts 中找到有效的 versionName！"
+            exit 1
+          fi
+
+          # 确保 Tag 带有 'v' 前缀（例如从 1.0.0 变为 v1.0.0）
+          if [[ "$VERSION_NAME" != v* ]]; then
+            AUTO_TAG="v$VERSION_NAME"
+          else
+            AUTO_TAG="$VERSION_NAME"
+          fi
+
+          # 优先级：手动输入的 Tag > 推送的 Git Tag > 从 build.gradle.kts 提取的 Tag
           if [ -n "${{ github.event.inputs.release_tag }}" ]; then
             TAG_NAME="${{ github.event.inputs.release_tag }}"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${github_ref#refs/tags/}"
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
           else
-            # 手动触发且未填 Tag 时，使用时间戳作为默认 Tag
-            TAG_NAME="v$(date +'%Y.%m.%d-%H%M')"
+            TAG_NAME="$AUTO_TAG"
           fi
+
           echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
           echo "Release tag will be: $TAG_NAME"
 
-      # 寻找编译好的 APK 文件
+      # 3. 寻找编译好的 APK 文件
       - name: Locate APK File
         id: find_apk
         run: |
@@ -65,7 +82,7 @@ jobs:
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
           echo "Found APK at: $APK_PATH"
 
-      # 发布 GitHub Release
+      # 4. 创建并发布到 GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
