@@ -33,7 +33,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
            // 关键：强制 release 包使用默认的 debug 证书签名，解决“解析包失败”
-            signingConfig = signingConfigs.getByName("debug")
+           // signingConfig = signingConfigs.getByName("debug")
         }
     }
     // 自定义APK输出名称
