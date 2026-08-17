@@ -269,7 +269,7 @@ class AutoSlideService : AccessibilityService() {
             return super.onKeyEvent(event)
         }
         // 强制停止滑动并恢复悬浮窗面板
-        forceStop()
+        //forceStop()
         return true
     }
 
