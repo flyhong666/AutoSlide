@@ -83,7 +83,7 @@ class AutoSlideService : AccessibilityService() {
             if (intent?.action != Intent.ACTION_SCREEN_OFF || !isRunning) {
                 return
             }
-            forceStop()
+           // forceStop()
         }
     }
 
