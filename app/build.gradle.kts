@@ -21,7 +21,7 @@ android {
         // 版本号
         versionCode = 18
         // 版本名称
-        versionName = "2.5.3"
+        versionName = "2.5.5"
         // 单元测试
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
