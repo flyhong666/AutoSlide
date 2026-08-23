@@ -20,30 +20,19 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.ltx.DEFAULT_MAX_PAUSE_TIME
-import com.ltx.DEFAULT_MIN_PAUSE_TIME
-import com.ltx.DEFAULT_PAUSE_TIME
-import com.ltx.DEFAULT_SPEED
 import com.ltx.DIRECTION_DOWN
 import com.ltx.DIRECTION_LEFT
 import com.ltx.DIRECTION_RIGHT
 import com.ltx.DIRECTION_UP
-import com.ltx.KEY_CUSTOM_TRAJECTORY_DOWN
-import com.ltx.KEY_CUSTOM_TRAJECTORY_LEFT
-import com.ltx.KEY_CUSTOM_TRAJECTORY_RIGHT
-import com.ltx.KEY_CUSTOM_TRAJECTORY_UP
-import com.ltx.KEY_MAX_PAUSE_TIME
-import com.ltx.KEY_MIN_PAUSE_TIME
-import com.ltx.KEY_PAUSE_MODE
-import com.ltx.KEY_PAUSE_TIME
-import com.ltx.KEY_SPEED
 import com.ltx.MainActivity
-import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
+import com.ltx.clearCustomTrajectory
+import com.ltx.getSlideConfig
 import com.ltx.getTrajectoryKey
+import com.ltx.hasCustomTrajectory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -133,14 +122,7 @@ class FloatingWindowService : Service() {
         if (::rootView.isInitialized && ::layoutParams.isInitialized) {
             rootView.post {
                 if (::rootView.isInitialized && ::layoutParams.isInitialized) {
-                    val displayMetrics = resources.displayMetrics
-                    val screenWidth = displayMetrics.widthPixels
-                    val screenHeight = displayMetrics.heightPixels
-                    val viewWidth = rootView.width
-                    val viewHeight = rootView.height
-                    layoutParams.x = layoutParams.x.coerceIn(0, (screenWidth - viewWidth).coerceAtLeast(0))
-                    layoutParams.y = layoutParams.y.coerceIn(0, (screenHeight - viewHeight).coerceAtLeast(0))
-                    windowManager.updateViewLayout(rootView, layoutParams)
+                    updateClampedPosition()
                 }
             }
         }
@@ -190,31 +172,39 @@ class FloatingWindowService : Service() {
             override fun onDragMove(rawX: Float, rawY: Float) {
                 val deltaX = rawX - initialTouchX
                 val deltaY = rawY - initialTouchY
-                // 获取屏幕宽高和悬浮窗宽高
-                val displayMetrics = resources.displayMetrics
-                val screenWidth = displayMetrics.widthPixels
-                val screenHeight = displayMetrics.heightPixels
-                val viewWidth = rootView.width
-                val viewHeight = rootView.height
-                // 计算目标位置
                 val targetX = (initialX + deltaX).toInt()
                 val targetY = (initialY + deltaY).toInt()
-                layoutParams.x = targetX.coerceIn(0, (screenWidth - viewWidth).coerceAtLeast(0))
-                layoutParams.y = targetY.coerceIn(0, (screenHeight - viewHeight).coerceAtLeast(0))
-                // 更新悬浮窗位置
-                windowManager.updateViewLayout(rootView, layoutParams)
+                updateClampedPosition(targetX, targetY)
             }
         })
+    }
+
+    /**
+     * 更新悬浮窗位置并限制在屏幕可视范围内
+     *
+     * @param targetX 目标X坐标
+     * @param targetY 目标Y坐标
+     */
+    private fun updateClampedPosition(
+        targetX: Int = layoutParams.x, targetY: Int = layoutParams.y
+    ) {
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        val viewWidth = rootView.width
+        val viewHeight = rootView.height
+        layoutParams.x = targetX.coerceIn(0, (screenWidth - viewWidth).coerceAtLeast(0))
+        layoutParams.y = targetY.coerceIn(0, (screenHeight - viewHeight).coerceAtLeast(0))
+        windowManager.updateViewLayout(rootView, layoutParams)
     }
 
     /* 绑定所有控制按钮事件 */
     private fun setupControlButtons() {
         expandButton.setOnClickListener { expand() }
-        // 方向按钮⌈点击/长按⌋事件绑定
-        bindDirectionButton(R.id.floating_up_button, DIRECTION_UP)
-        bindDirectionButton(R.id.floating_down_button, DIRECTION_DOWN)
-        bindDirectionButton(R.id.floating_left_button, DIRECTION_LEFT)
-        bindDirectionButton(R.id.floating_right_button, DIRECTION_RIGHT)
+        // 遍历方向按钮并绑定事件
+        DIRECTION_BUTTON_MAP.forEach { (viewId, direction) ->
+            bindDirectionButton(viewId, direction)
+        }
         // 设置按钮点击事件
         rootView.findViewById<View>(R.id.floating_setting_button).setOnClickListener {
             returnToMainActivity()
@@ -241,7 +231,7 @@ class FloatingWindowService : Service() {
             .setTitle(getTrajectoryManageTitle(direction)).setItems(items) { _, which ->
                 when (items[which]) {
                     getString(R.string.record) -> startRecordingTrajectory(direction)
-                    getString(R.string.reset) -> clearTrajectory(direction)
+                    getString(R.string.reset) -> clearCustomTrajectory(direction)
                 }
             }.setNegativeButton(R.string.cancel, null)
         showSystemAlertDialog(builder)
@@ -314,19 +304,6 @@ class FloatingWindowService : Service() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
             putString(key, sb.toString())
         }
-    }
-
-    /**
-     * 清除轨迹
-     *
-     * @param direction 方向字符串
-     */
-    private fun clearTrajectory(direction: String) {
-        val key = getTrajectoryKey(direction) ?: return
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            remove(key)
-        }
-        updateDirectionButtonIndicators()
     }
 
     /**
@@ -416,22 +393,14 @@ class FloatingWindowService : Service() {
 
     /* 更新方向按钮视觉标记 */
     private fun updateDirectionButtonIndicators() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val defaultColor = ContextCompat.getColor(this, R.color.floating_btn_bg)
         val activeColor = ContextCompat.getColor(this, R.color.floating_btn_active)
         val defaultIconColor = ContextCompat.getColor(this, R.color.floating_btn_icon)
         val activeIconColor = ContextCompat.getColor(this, R.color.floating_btn_active_icon)
-        // 方向按钮ID与轨迹存储键的映射
-        val buttons = mapOf(
-            R.id.floating_up_button to KEY_CUSTOM_TRAJECTORY_UP,
-            R.id.floating_down_button to KEY_CUSTOM_TRAJECTORY_DOWN,
-            R.id.floating_left_button to KEY_CUSTOM_TRAJECTORY_LEFT,
-            R.id.floating_right_button to KEY_CUSTOM_TRAJECTORY_RIGHT
-        )
         // 遍历方向按钮并更新视觉标记
-        buttons.forEach { (viewId, key) ->
+        DIRECTION_BUTTON_MAP.forEach { (viewId, direction) ->
             val button = rootView.findViewById<FloatingActionButton>(viewId)
-            val hasTrajectory = prefs.getString(key, null)?.isNotBlank() == true
+            val hasTrajectory = hasCustomTrajectory(direction)
             button?.let {
                 it.backgroundTintList = ColorStateList.valueOf(
                     if (hasTrajectory) activeColor else defaultColor
@@ -459,10 +428,7 @@ class FloatingWindowService : Service() {
         }
         // 方向按钮⌈长按⌋事件绑定
         button.setOnLongClickListener {
-            val hasCustom = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(getTrajectoryKey(direction), null)
-                ?.isNotBlank() == true
-            if (hasCustom) {
+            if (hasCustomTrajectory(direction)) {
                 showTrajectoryManageDialog(direction)
             } else {
                 startRecordingTrajectory(direction)
@@ -471,11 +437,29 @@ class FloatingWindowService : Service() {
         }
     }
 
+    /**
+     * 设置悬浮窗展开与最小化状态
+     *
+     * @param isExpanded 是否展开
+     * @param stopSlide 是否停止当前自动滑动
+     */
+    private fun setExpanded(isExpanded: Boolean, stopSlide: Boolean = true) {
+        if (isExpanded) {
+            controlPanel.visibility = View.VISIBLE
+            expandButton.visibility = View.GONE
+        } else {
+            controlPanel.visibility = View.GONE
+            expandButton.visibility = View.VISIBLE
+        }
+        windowManager.updateViewLayout(rootView, layoutParams)
+        if (isExpanded && stopSlide) {
+            AutoSlideService.getInstance()?.stopSlide()
+        }
+    }
+
     /* 最小化悬浮窗 */
     private fun minimize() {
-        controlPanel.visibility = View.GONE
-        expandButton.visibility = View.VISIBLE
-        windowManager.updateViewLayout(rootView, layoutParams)
+        setExpanded(false)
     }
 
     /**
@@ -484,26 +468,13 @@ class FloatingWindowService : Service() {
      * @param stopSlide 是否停止当前自动滑动
      */
     private fun expand(stopSlide: Boolean = true) {
-        controlPanel.visibility = View.VISIBLE
-        expandButton.visibility = View.GONE
-        windowManager.updateViewLayout(rootView, layoutParams)
-        if (stopSlide) {
-            AutoSlideService.getInstance()?.stopSlide()
-        }
+        setExpanded(true, stopSlide)
     }
 
     /* 启动自动滑动服务 */
     private fun startSlide() {
         minimize()
-        // 从本地配置文件读取当前设置
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        AutoSlideService.getInstance()?.startSlideWithConfig(
-            speedVal = prefs.getInt(KEY_SPEED, DEFAULT_SPEED),
-            pauseModeVal = prefs.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE),
-            pauseTimeVal = prefs.getInt(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME),
-            minPauseVal = prefs.getInt(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME),
-            maxPauseVal = prefs.getInt(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME)
-        )
+        AutoSlideService.getInstance()?.startSlideWithConfig(getSlideConfig())
     }
 
     /* 返回主界面 */
@@ -527,6 +498,14 @@ class FloatingWindowService : Service() {
 
     companion object {
         private var isServiceRunning = false
+
+        // 方向按钮ID与方向的映射
+        private val DIRECTION_BUTTON_MAP = mapOf(
+            R.id.floating_up_button to DIRECTION_UP,
+            R.id.floating_down_button to DIRECTION_DOWN,
+            R.id.floating_left_button to DIRECTION_LEFT,
+            R.id.floating_right_button to DIRECTION_RIGHT
+        )
 
         /**
          * 获取悬浮窗服务运行状态
