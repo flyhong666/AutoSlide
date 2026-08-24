@@ -15,3 +15,7 @@ app/src/test
 .externalNativeBuild
 .cxx
 local.properties
+# 忽略所有签名证书文件
+*.jks
+*.keystore
+*.p12
