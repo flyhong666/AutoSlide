@@ -35,9 +35,24 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 1. 编译 Release APK
+      # ================= 【新增步骤】解码还原临时 JKS 证书 =================
+      - name: Decode Keystore File
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
+
+      # 1. 编译 Release APK（注入签名所需的环境变量）
       - name: Build Release APK
+        env:
+          KEYSTORE_PATH: keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
+
+      # ================= 【新增步骤】清理临时 KeyStore 文件 =================
+      - name: Clean Up Keystore
+        if: always() # 无论编译成功或失败，都强制执行清理
+        run: rm -f app/keystore.jks
 
       # 2. 从 app/build.gradle.kts 中自动提取 versionName 作为 Tag
       - name: Determine Tag Name
