@@ -1,4 +1,6 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import java.io.FileInputStream
+import java.util.Properties
 
 // AGP
 plugins {
@@ -25,6 +27,43 @@ android {
         // 单元测试
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    // ==================== 自签名配置开始 ====================
+    signingConfigs {
+        create("release") {
+            // 1. 优先从环境变量读取（给 GitHub Actions 使用）
+            val envKeystorePath = System.getenv("KEYSTORE_PATH")
+            val envKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
+            val envKeyAlias = System.getenv("KEY_ALIAS")
+            val envKeyPassword = System.getenv("KEY_PASSWORD")
+
+            // 2. 尝试从 local.properties 读取（给本地 Android Studio 编译使用）
+            val localProperties = Properties()
+            val localPropertiesFile = rootProject.file("local.properties")
+            if (localPropertiesFile.exists()) {
+                localProperties.load(FileInputStream(localPropertiesFile))
+            }
+
+            val keystorePath = envKeystorePath ?: localProperties.getProperty("KEYSTORE_PATH")
+            val keystorePassword = envKeystorePassword ?: localProperties.getProperty("KEYSTORE_PASSWORD")
+            val keyAlias = envKeyAlias ?: localProperties.getProperty("KEY_ALIAS")
+            val keyPassword = envKeyPassword ?: localProperties.getProperty("KEY_PASSWORD")
+
+            // 3. 如果配置了签名文件，则进行配置
+            if (!keystorePath.isNullOrEmpty()) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+                // 开启 V1 和 V2, V3签名，确保高版本 Android 系统正常安装
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+    // ==================== 自签名配置结束 ====================
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -32,10 +71,11 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
-           // 关键：强制 release 包使用默认的 debug 证书签名，解决“解析包失败”
-           // signingConfig = signingConfigs.getByName("debug")
+            // 绑定上面配置好的 release 自签名
+            signingConfig = signingConfigs.getByName("release")
         }
     }
+
     // 自定义APK输出名称
     applicationVariants.all {
         outputs.all {
