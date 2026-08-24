@@ -35,10 +35,21 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # ================= 【新增步骤】解码还原临时 JKS 证书 =================
+      # ================= 【新增/优化】解码还原并校验 JKS 证书 =================
       - name: Decode Keystore File
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
+          # 过滤 Windows 可能夹带的换行符并解码
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 --decode > app/keystore.jks
+          
+          echo "======== 检查临时 JKS 文件 ========"
+          ls -lh app/keystore.jks
+          
+          # 判断文件大小，防止坏包产生
+          FILE_SIZE=$(stat -c%s "app/keystore.jks")
+          if [ "$FILE_SIZE" -lt 100 ]; then
+            echo "错误：还原的 keystore.jks 文件异常（仅 $FILE_SIZE 字节），请重新在本地生成 KEYSTORE_BASE64！"
+            exit 1
+          fi
 
       # 1. 编译 Release APK（注入签名所需的环境变量）
       - name: Build Release APK
@@ -96,6 +107,12 @@ jobs:
           fi
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
           echo "Found APK at: $APK_PATH"
+
+      # ================= 【新增步骤】自动校验生成的 APK 签名 =================
+      - name: Verify APK Signature
+        run: |
+          echo "======== 开始校验生成的 APK 签名 ========"
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose ${{ env.APK_PATH }}
 
       # 4. 创建并发布到 GitHub Release
       - name: Create GitHub Release
